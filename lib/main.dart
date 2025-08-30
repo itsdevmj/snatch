@@ -3,6 +3,7 @@ import 'package:snatch/others/update_manager.dart';
 import 'package:snatch/utils/clipboardwatcher.dart';
 import 'package:snatch/utils/downloads.dart';
 import 'package:snatch/utils/settings.dart';
+import 'package:snatch/utils/download_manager.dart';
 
 void main() => runApp(MyApp());
 
@@ -30,23 +31,33 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int currentPageIndex = 0;
   late AnimationController _animationController;
-  
+
   final List<Widget> pages = [
     ClipboardWatcherPage(),
     SettingsPage(),
-    DownloadsPage()
+    DownloadsPage(),
   ];
 
   @override
   void initState() {
     super.initState();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       UpdateManager.checkForUpdate(context);
-     });
+      _requestPermissions();
+    });
     _animationController = AnimationController(
       duration: Duration(milliseconds: 300),
       vsync: this,
     );
+  }
+
+  Future<void> _requestPermissions() async {
+    try {
+      final downloadManager = DownloadManager();
+      await downloadManager.requestStoragePermission();
+    } catch (e) {
+      print('Error requesting permissions: $e');
+    }
   }
 
   @override
@@ -93,7 +104,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   label: 'Settings',
                   index: 1,
                 ),
-                  _buildNavItem(
+                _buildNavItem(
                   icon: Icons.download,
                   label: 'Downloads',
                   index: 2,
@@ -112,7 +123,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     required int index,
   }) {
     final isSelected = currentPageIndex == index;
-    
+
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -131,10 +142,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           vertical: 8,
         ),
         decoration: BoxDecoration(
-          color: isSelected 
-            // ignore: deprecated_member_use
-            ? Color(0xFF2196F3).withOpacity(0.12) 
-            : Colors.transparent,
+          color: isSelected
+              // ignore: deprecated_member_use
+              ? Color(0xFF2196F3).withOpacity(0.12)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(18),
         ),
         child: Column(
@@ -148,9 +159,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               curve: Curves.easeInOut,
               child: Icon(
                 icon,
-                color: isSelected 
-                  ? Color(0xFF2196F3) 
-                  : Color(0xFF757575),
+                color: isSelected ? Color(0xFF2196F3) : Color(0xFF757575),
                 size: 24,
               ),
             ),
@@ -160,13 +169,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               duration: Duration(milliseconds: 250),
               curve: Curves.easeInOut,
               style: TextStyle(
-                color: isSelected 
-                  ? Color(0xFF2196F3) 
-                  : Color(0xFF757575),
+                color: isSelected ? Color(0xFF2196F3) : Color(0xFF757575),
                 fontSize: 12,
-                fontWeight: isSelected 
-                  ? FontWeight.w600 
-                  : FontWeight.w500,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                 letterSpacing: 0.3,
               ),
               child: Text(label),

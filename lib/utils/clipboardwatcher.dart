@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:snatch/utils/download_manager.dart';
 
@@ -37,108 +38,154 @@ class _ClipboardWatcherPageState extends State<ClipboardWatcherPage>
 
   //link processing and stuff
   Future<void> sndLkToApi(String link) async {
-    // processing
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
+    try {
+      // processing
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
               ),
-            ),
-            SizedBox(width: 8),
-            Text('Processing ${getPlatfromName(link)} link...'),
-          ],
+              SizedBox(width: 8),
+              Text('Processing ${getPlatfromName(link)} link...'),
+            ],
+          ),
+          duration: Duration(seconds: 3),
         ),
-        duration: Duration(seconds: 3),
-      ),
-    );
+      );
 
-    Map<String, dynamic> dtosend = {
-      'url': link,
-      'platform': getPlatfromName(link),
-      'timestamp': DateTime.now().toString(),
-    };
+      Map<String, dynamic> dtosend = {
+        'url': link,
+        'platform': getPlatfromName(link),
+        'timestamp': DateTime.now().toString(),
+      };
 
-    //will get GET later on
-    final res = await http.post(
-      Uri.parse(apiEndpoint),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(dtosend),
-    );
-    print('${res.body}');
+      print('Sending request to API: $apiEndpoint');
+      print('Request data: ${jsonEncode(dtosend)}');
 
-    if (res.statusCode == 200) {
-      // Parse API response
-      final responseData = jsonDecode(res.body);
+      //will get GET later on
+      final res = await http
+          .post(
+            Uri.parse(apiEndpoint),
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': 'Snatch-App/1.0',
+            },
+            body: jsonEncode(dtosend),
+          )
+          .timeout(Duration(seconds: 30));
 
-      final String title = responseData['title'] ?? 'Unknown Title';
-      final String videoUrl = responseData['videoUrl'] ?? '';
-      final String platform = getPlatfromName(link);
-      final int duration = responseData['duration'] ?? 0;
-      final Map<String, dynamic>? author = responseData['author'];
+      print('API Response Status: ${res.statusCode}');
+      print('API Response Body: ${res.body}');
 
-      // Clean up the title (remove hashtags for filename)
-      String cleanTitle = title
-          .replaceAll('#', '')
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
-      if (cleanTitle.isEmpty) {
-        cleanTitle = 'Video_${DateTime.now().millisecondsSinceEpoch}';
+      if (res.statusCode == 200) {
+        // Parse API response
+        final responseData = jsonDecode(res.body);
+
+        final String title = responseData['title'] ?? 'Unknown Title';
+        final String videoUrl = responseData['videoUrl'] ?? '';
+        final String platform = getPlatfromName(link);
+        final int duration = responseData['duration'] ?? 0;
+        final Map<String, dynamic>? author = responseData['author'];
+
+        // Clean up the title (remove hashtags for filename)
+        String cleanTitle = title
+            .replaceAll('#', '')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim();
+        if (cleanTitle.isEmpty) {
+          cleanTitle = 'Video_${DateTime.now().millisecondsSinceEpoch}';
+        }
+
+        // Add author info to title if available
+        if (author != null && author['nickname'] != null) {
+          cleanTitle = '${author['nickname']} - $cleanTitle';
+        }
+
+        // Limit title length for filename
+        if (cleanTitle.length > 100) {
+          cleanTitle = cleanTitle.substring(0, 100);
+        }
+
+        if (videoUrl.isNotEmpty) {
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Starting download:',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    cleanTitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (duration > 0) Text('Duration: ${duration}s'),
+                ],
+              ),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 4),
+            ),
+          );
+
+          // Start the actual download
+          await DownloadManager().startDownload(
+            videoUrl: videoUrl,
+            title: cleanTitle,
+            platform: platform,
+            author: author?['nickname'] ?? 'Unknown',
+            duration: duration,
+          );
+
+          print('Download started for: $cleanTitle'); // Debug
+        } else {
+          throw Exception('No video URL found in API response');
+        }
+      } else {
+        throw Exception(
+          'API returned error: ${res.statusCode}\nBody: ${res.body}',
+        );
       }
+    } catch (e) {
+      print('Error processing link: $e');
 
-      // Add author info to title if available
-      if (author != null && author['nickname'] != null) {
-        cleanTitle = '${author['nickname']} - $cleanTitle';
-      }
-
-      // Limit title length for filename
-      if (cleanTitle.length > 100) {
-        cleanTitle = cleanTitle.substring(0, 100);
-      }
-
-      if (videoUrl.isNotEmpty) {
-        // Show success message
+      // Show error message to user
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+            content: Row(
               children: [
-                Text(
-                  'Starting download:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
+                Icon(Icons.error_outline, color: Colors.white, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Failed to process ${getPlatfromName(link)} link: ${e.toString()}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                Text(cleanTitle, maxLines: 2, overflow: TextOverflow.ellipsis),
-                if (duration > 0) Text('Duration: ${duration}s'),
               ],
             ),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 4),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () => sndLkToApi(link),
+            ),
           ),
         );
-
-        // Start the actual download
-        await DownloadManager().startDownload(
-          videoUrl: videoUrl,
-          title: cleanTitle,
-          platform: platform,
-          author: author?['nickname'] ?? 'Unknown',
-          duration: duration,
-        );
-
-        print('Download started for: $cleanTitle'); // Debug
-      } else {
-        throw Exception('No video URL found in API response');
       }
-    } else {
-      throw Exception(
-        'API returned error: ${res.statusCode}\nBody: ${res.body}',
-      );
     }
   }
 
@@ -149,9 +196,56 @@ class _ClipboardWatcherPageState extends State<ClipboardWatcherPage>
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
-    clipboardWatcher.addListener(this);
-    clipboardWatcher.start();
+    _initializeClipboardWatcher();
     loadClips();
+  }
+
+  Future<void> _initializeClipboardWatcher() async {
+    try {
+      clipboardWatcher.addListener(this);
+      await clipboardWatcher.start();
+      print('Clipboard watcher started successfully');
+    } catch (e) {
+      print('Error starting clipboard watcher: $e');
+      // Fallback: Check clipboard periodically
+      _startPeriodicClipboardCheck();
+    }
+  }
+
+  void _startPeriodicClipboardCheck() {
+    Timer.periodic(Duration(seconds: 2), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      await _checkClipboard();
+    });
+  }
+
+  Future<void> _checkClipboard() async {
+    try {
+      ClipboardData? data = await Clipboard.getData(Clipboard.kTextPlain);
+      if (data != null &&
+          data.text != null &&
+          data.text!.isNotEmpty &&
+          data.text != copiedText) {
+        print('Manual clipboard check found new content: ${data.text}');
+        onClipboardChanged();
+      }
+    } catch (e) {
+      print('Error checking clipboard: $e');
+    }
+  }
+
+  // Test method to verify API connectivity
+  Future<void> testApiConnection() async {
+    try {
+      final testUrl = 'https://www.tiktok.com/@test/video/123';
+      print('Testing API connection with: $testUrl');
+      await sndLkToApi(testUrl);
+    } catch (e) {
+      print('API test failed: $e');
+    }
   }
 
   @override
@@ -287,6 +381,29 @@ class _ClipboardWatcherPageState extends State<ClipboardWatcherPage>
           ],
         ),
         actions: [
+          Container(
+            margin: EdgeInsets.only(right: 8),
+            child: IconButton(
+              onPressed: () async {
+                await _checkClipboard();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Clipboard checked manually'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+              icon: Container(
+                padding: EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Color(0xFF3B82F6).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.refresh, color: Color(0xFF3B82F6), size: 20),
+              ),
+              tooltip: 'Check clipboard manually',
+            ),
+          ),
           if (savedClips.isNotEmpty)
             Container(
               margin: EdgeInsets.only(right: 16),

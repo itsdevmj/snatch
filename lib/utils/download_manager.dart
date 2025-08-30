@@ -117,22 +117,48 @@ class DownloadManager {
   // Request storage permission
   Future<bool> requestStoragePermission() async {
     if (Platform.isAndroid) {
-      if (await Permission.storage.isGranted) {
-        return true;
+      try {
+        // Check if we already have permissions
+        bool hasStorage = await Permission.storage.isGranted;
+        bool hasManageExternal =
+            await Permission.manageExternalStorage.isGranted;
+
+        if (hasStorage || hasManageExternal) {
+          print('Storage permissions already granted');
+          return true;
+        }
+
+        print('Requesting storage permissions...');
+
+        // Request storage permission first
+        PermissionStatus storageStatus = await Permission.storage.request();
+        print('Storage permission status: $storageStatus');
+
+        if (storageStatus.isGranted) {
+          return true;
+        }
+
+        // If storage permission denied, try manage external storage
+        PermissionStatus manageStatus = await Permission.manageExternalStorage
+            .request();
+        print('Manage external storage permission status: $manageStatus');
+
+        if (manageStatus.isGranted) {
+          return true;
+        }
+
+        // If both denied, show user what to do
+        if (storageStatus.isPermanentlyDenied ||
+            manageStatus.isPermanentlyDenied) {
+          print('Permissions permanently denied. Opening app settings...');
+          await openAppSettings();
+        }
+
+        return false;
+      } catch (e) {
+        print('Error requesting permissions: $e');
+        return false;
       }
-
-      // For Android 11+ (API 30+)
-      if (await Permission.manageExternalStorage.isGranted) {
-        return true;
-      }
-
-      // Request normal storage permission first
-      var status = await Permission.storage.request();
-      if (status.isGranted) return true;
-
-      // If still not granted, request all files access
-      var manageStatus = await Permission.manageExternalStorage.request();
-      return manageStatus.isGranted;
     }
     return true;
   }
@@ -148,10 +174,23 @@ class DownloadManager {
     }
 
     if (Platform.isAndroid) {
-      // Try to use the Downloads folder
-      Directory? downloadsDir = Directory(
-        '/storage/emulated/0/Download/Videos',
-      );
+      try {
+        // Try to use the external storage directory first
+        final directory = await getExternalStorageDirectory();
+        if (directory != null) {
+          final downloadsDir = Directory('${directory.path}/Downloads');
+          if (!await downloadsDir.exists()) {
+            await downloadsDir.create(recursive: true);
+          }
+          return downloadsDir.path;
+        }
+      } catch (e) {
+        print('Error accessing external storage: $e');
+      }
+
+      // Fallback to app documents directory
+      final directory = await getApplicationDocumentsDirectory();
+      final downloadsDir = Directory('${directory.path}/Downloads');
       if (!await downloadsDir.exists()) {
         await downloadsDir.create(recursive: true);
       }
